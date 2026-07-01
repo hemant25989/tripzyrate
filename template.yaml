@@ -1,0 +1,68 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Tripzyrate lead-capture API: HTTP API -> Lambda -> DynamoDB
+
+Globals:
+  Function:
+    Timeout: 10
+    MemorySize: 128
+    Runtime: nodejs20.x
+
+Resources:
+
+  # ---------- HTTP API with CORS ----------
+  TripzyrateApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: prod
+      CorsConfiguration:
+        AllowOrigins:
+          - "*"                 # tighten to your real domain before production
+        AllowMethods:
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+
+  # ---------- DynamoDB table ----------
+  LeadsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: TripzyrateLeads
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+
+  # ---------- Lambda function ----------
+  InquiryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/index.handler
+      CodeUri: ./
+      Environment:
+        Variables:
+          LEADS_TABLE: !Ref LeadsTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref LeadsTable
+      Events:
+        SubmitInquiryApi:
+          Type: HttpApi
+          Properties:
+            Path: /inquiry
+            Method: post
+            ApiId: !Ref TripzyrateApi
+
+Outputs:
+  ApiUrl:
+    Description: "API Gateway endpoint URL to paste into your React frontend"
+    Value: !Sub "https://${TripzyrateApi}.execute-api.${AWS::Region}.amazonaws.com/prod/inquiry"
+
+  LeadsTableName:
+    Description: "DynamoDB table storing submitted leads"
+    Value: !Ref LeadsTable
