@@ -228,6 +228,14 @@ Resources:
             # FIX: Bypasses the default Cognito requirement just for this public viewing route!
             Auth:
               Authorizer: NONE
+        PostBookings:
+          Type: HttpApi
+          Properties:
+            Path: /api/products
+            Method: post
+            ApiId: !Ref TripzyHttpApi
+            Auth:
+              Authorizer: NONE              
 
   TripzySingleTable:
     Type: AWS::DynamoDB::Table
