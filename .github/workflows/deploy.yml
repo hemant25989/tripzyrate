@@ -35,25 +35,44 @@ jobs:
           audience: sts.amazonaws.com
 
       # -------------------------------------------------------------------------
-      # STEP 2: PROVISION EDGE SSL CERTIFICATE (us-east-1)
+      # STEP 2: PROVISION / FETCH EDGE SSL CERTIFICATE VIA AWS CLI
       # -------------------------------------------------------------------------
-      - name: Provision Automated SSL Certificate (N. Virginia)
+      - name: Request and Validate SSL Certificate (N. Virginia Edge)
+        id: get-cert
         run: |
-          aws cloudformation deploy \
-            --template-file certificate-us-east-1.yaml \
-            --stack-name tripzyrate-global-certificate \
-            --region us-east-1
+          echo "Checking for an existing certificate for tripzyrate.in..."
+          
+          # Tries to find an existing certificate ARN for your domain in us-east-1
+          EXISTING_ARN=$(aws acm list-certificates --region us-east-1 --query "CertificateSummaryList[?DomainName=='tripzyrate.in'].CertificateArn" --output text)
+          
+          if [ -z "$EXISTING_ARN" ] || [ "$EXISTING_ARN" == "None" ]; then
+            echo "No certificate found. Requesting a brand new one..."
+            NEW_ARN=$(aws acm request-certificate \
+              --domain-name tripzyrate.in \
+              --validation-method DNS \
+              --subject-alternative-names "*.tripzyrate.in" \
+              --idempotency-token tripzyratemaincert \
+              --region us-east-1 \
+              --query "CertificateArn" --output text)
+            
+            echo "New Certificate Requested. ARN: $NEW_ARN"
+            echo "CERT_ARN=$NEW_ARN" >> $GITHUB_OUTPUT
+          else
+            echo "Found existing certificate. ARN: $EXISTING_ARN"
+            echo "CERT_ARN=$EXISTING_ARN" >> $GITHUB_OUTPUT
+          fi
 
       # -------------------------------------------------------------------------
-      # STEP 3: DEPLOY BACKEND MICROSERVICES STACK (ap-south-1)
+      # STEP 3: DEPLOY BACKEND MICROSERVICES STACK (ap-south-1 Mumbai)
       # -------------------------------------------------------------------------
       - name: SAM Build Production Application
         run: sam build
 
       - name: SAM Deploy Core Application (Mumbai Backend)
         run: |
-          # Grabs the Certificate ARN generated completely on the fly in the previous step
-          CERT_ARN=$(aws cloudformation describe-stacks --stack-name tripzyrate-global-certificate --region us-east-1 --query "Stacks[0].Outputs[?OutputKey=='CertificateArn'].OutputValue" --output text)
+          # Grabs the Certificate ARN set securely in Step 2
+          CERT_ARN="${{ steps.get-cert.outputs.CERT_ARN }}"
+          echo "Deploying production stack with Certificate ARN: $CERT_ARN"
           
           sam deploy --no-confirm-changeset --no-fail-on-empty-changeset \
             --stack-name tripzyrate-production-stack \
