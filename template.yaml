@@ -86,7 +86,6 @@ Resources:
         DefaultRootObject: index.html
         Aliases:
           - !Ref DomainName
-          - !Sub "www.${DomainName}"
         Origins:
           - Id: S3FrontendOrigin
             DomainName: !GetAtt TripzyFrontendBucket.RegionalDomainName
