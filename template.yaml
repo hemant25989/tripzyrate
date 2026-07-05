@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: End-to-End Serverless Production Architecture for tripzyrate.in
+Description: Production Serverless Architecture for tripzyrate.in with Clean Routing Mappings
 
 Parameters:
   DomainName:
@@ -22,9 +22,6 @@ Globals:
         TABLE_NAME: !Ref TripzySingleTable
 
 Resources:
-  # =========================================================================
-  # DYNAMIC CUSTOM ORIGIN REQUEST POLICY (Bypasses the 404 Managed Policy Error)
-  # =========================================================================
   TripzyApiOriginRequestPolicy:
     Type: AWS::CloudFront::OriginRequestPolicy
     Properties:
@@ -39,9 +36,6 @@ Resources:
         QueryStringsConfig:
           QueryStringBehavior: all
 
-  # =========================================================================
-  # CDN CONFIGURATION (S3 Static Frontend + CloudFront Global Edge)
-  # =========================================================================
   TripzyFrontendBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -101,23 +95,20 @@ Resources:
           TargetOriginId: S3FrontendOrigin
           Compress: true
           ViewerProtocolPolicy: redirect-to-https
-          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # Managed-CachingOptimized
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
         
         CacheBehaviors:
           - PathPattern: /api/*
             TargetOriginId: ApiGatewayOrigin
             ViewerProtocolPolicy: redirect-to-https
-            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad # Managed-CachingDisabled
-            OriginRequestPolicyId: !Ref TripzyApiOriginRequestPolicy # FIXED: Refers to dynamically created custom policy
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            OriginRequestPolicyId: !Ref TripzyApiOriginRequestPolicy
 
         ViewerCertificate:
           AcmCertificateArn: !Ref AcmCertificateArn
           SslSupportMethod: sni-only
           MinimumProtocolVersion: TLSv1.2_2021
 
-  # =========================================================================
-  # ROUTE 53 AUTOMATED DNS MAPPINGS
-  # =========================================================================
   TripzyApexDnsRecord:
     Type: AWS::Route53::RecordSet
     Properties:
@@ -128,19 +119,6 @@ Resources:
         DNSName: !GetAtt TripzyCloudFrontDistribution.DomainName
         HostedZoneId: Z2FDTNDATAQYW2
 
-  TripzyWwwDnsRecord:
-    Type: AWS::Route53::RecordSet
-    Properties:
-      HostedZoneId: !Ref HostedZoneId
-      Name: !Sub "www.${DomainName}"
-      Type: A
-      AliasTarget:
-        DNSName: !GetAtt TripzyCloudFrontDistribution.DomainName
-        HostedZoneId: Z2FDTNDATAQYW2
-
-  # =========================================================================
-  # MUMBAI BACKEND COMPONENTS (VPC, Subnets, Lambdas, DynamoDB)
-  # =========================================================================
   TripzyUserPool:
     Type: AWS::Cognito::UserPool
     Properties:
@@ -172,7 +150,7 @@ Resources:
   LambdaSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Isolated security parameters for Lambda compute inside VPC
+      GroupDescription: Security configuration group parameters for compute instances
       VpcId: !Ref TripzyVPC
 
   PrivateRouteTable:
@@ -197,7 +175,6 @@ Resources:
   TripzyHttpApi:
     Type: AWS::Serverless::HttpApi
     Properties:
-      # FIX: Changing StageName to '$default' removes the '/prod' prefix completely!
       StageName: "$default"
       Auth:
         DefaultAuthorizer: CognitoAuthorizer
@@ -225,7 +202,6 @@ Resources:
             Path: /api/products
             Method: get
             ApiId: !Ref TripzyHttpApi
-            # FIX: Bypasses the default Cognito requirement just for this public viewing route!
             Auth:
               Authorizer: NONE
         PostBookings:
@@ -235,7 +211,7 @@ Resources:
             Method: post
             ApiId: !Ref TripzyHttpApi
             Auth:
-              Authorizer: NONE              
+              Authorizer: NONE
 
   TripzySingleTable:
     Type: AWS::DynamoDB::Table
