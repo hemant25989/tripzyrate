@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Unified Serverless Production Architecture with CloudFront served out of ap-south-1
+Description: End-to-End Serverless Production Architecture for tripzyrate.in
 
 Parameters:
   DomainName:
@@ -23,7 +23,24 @@ Globals:
 
 Resources:
   # =========================================================================
-  # CDN EDGE CONFIGURATION (S3 Static Frontend + CloudFront Global Delivery)
+  # DYNAMIC CUSTOM ORIGIN REQUEST POLICY (Bypasses the 404 Managed Policy Error)
+  # =========================================================================
+  TripzyApiOriginRequestPolicy:
+    Type: AWS::CloudFront::OriginRequestPolicy
+    Properties:
+      OriginRequestPolicyConfig:
+        Name: !Sub "TripzyApiOriginRequestPolicy-${AWS::StackName}"
+        CookiesConfig:
+          CookieBehavior: all
+        HeadersConfig:
+          HeaderBehavior: allExcept
+          Headers:
+            - Host
+        QueryStringsConfig:
+          QueryStringBehavior: all
+
+  # =========================================================================
+  # CDN CONFIGURATION (S3 Static Frontend + CloudFront Global Edge)
   # =========================================================================
   TripzyFrontendBucket:
     Type: AWS::S3::Bucket
@@ -85,14 +102,14 @@ Resources:
           TargetOriginId: S3FrontendOrigin
           Compress: true
           ViewerProtocolPolicy: redirect-to-https
-          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # Managed-CachingOptimized
         
         CacheBehaviors:
           - PathPattern: /api/*
             TargetOriginId: ApiGatewayOrigin
             ViewerProtocolPolicy: redirect-to-https
-            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
-            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac # <-- UPDATE THIS LINE HERE
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad # Managed-CachingDisabled
+            OriginRequestPolicyId: !Ref TripzyApiOriginRequestPolicy # FIXED: Refers to dynamically created custom policy
 
         ViewerCertificate:
           AcmCertificateArn: !Ref AcmCertificateArn
@@ -123,7 +140,7 @@ Resources:
         HostedZoneId: Z2FDTNDATAQYW2
 
   # =========================================================================
-  # MUMBAI BACKEND INFRASTRUCTURE (VPC, Subnets, Lambdas, DynamoDB)
+  # MUMBAI BACKEND COMPONENTS (VPC, Subnets, Lambdas, DynamoDB)
   # =========================================================================
   TripzyUserPool:
     Type: AWS::Cognito::UserPool
