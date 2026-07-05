@@ -102,13 +102,21 @@ Resources:
           Compress: true
           ViewerProtocolPolicy: redirect-to-https
           CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # Managed-CachingOptimized
-        
         CacheBehaviors:
           - PathPattern: /api/*
             TargetOriginId: ApiGatewayOrigin
             ViewerProtocolPolicy: redirect-to-https
+            # FIX 2: Enforce CloudFront to allow POST payloads through the CDN edge
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+              - PUT
+              - POST
+              - PATCH
+              - DELETE
             CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad # Managed-CachingDisabled
-            OriginRequestPolicyId: !Ref TripzyApiOriginRequestPolicy # FIXED: Refers to dynamically created custom policy
+            OriginRequestPolicyId: !Ref TripzyApiOriginRequestPolicy
 
         ViewerCertificate:
           AcmCertificateArn: !Ref AcmCertificateArn
@@ -193,12 +201,21 @@ Resources:
       ServiceName: !Sub com.amazonaws.${AWS::Region}.dynamodb
       VpcEndpointType: Gateway
       RouteTableIds: [!Ref PrivateRouteTable]
-
   TripzyHttpApi:
     Type: AWS::Serverless::HttpApi
     Properties:
-      # FIX: Changing StageName to '$default' removes the '/prod' prefix completely!
       StageName: "$default"
+      # FIX 1: Explicitly permit POST and GET cross-origin headers globally
+      CorsConfiguration:
+        AllowOrigins:
+          - "*"
+        AllowMethods:
+          - "GET"
+          - "POST"
+          - "OPTIONS"
+        AllowHeaders:
+          - "Content-Type"
+          - "Authorization"
       Auth:
         DefaultAuthorizer: CognitoAuthorizer
         Authorizers:
