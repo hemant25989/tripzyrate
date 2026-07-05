@@ -1,68 +1,231 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: >
-  Tripzyrate lead-capture API: HTTP API -> Lambda -> DynamoDB
+Description: Unified Serverless Production Architecture with CloudFront served out of ap-south-1
+
+Parameters:
+  DomainName:
+    Type: String
+    Default: tripzyrate.in
+  HostedZoneId:
+    Type: String
+    Default: Z00944631CIAK88XCKPME
+  AcmCertificateArn:
+    Type: String
 
 Globals:
   Function:
-    Timeout: 10
-    MemorySize: 128
-    Runtime: nodejs20.x
+    Runtime: nodejs22.x
+    Timeout: 30
+    MemorySize: 512
+    Environment:
+      Variables:
+        TABLE_NAME: !Ref TripzySingleTable
 
 Resources:
+  # =========================================================================
+  # CDN EDGE CONFIGURATION (S3 Static Frontend + CloudFront Global Delivery)
+  # =========================================================================
+  TripzyFrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "frontend-tripzyrate-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
 
-  # ---------- HTTP API with CORS ----------
-  TripzyrateApi:
+  TripzyOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "OAC-Frontend-${AWS::StackName}"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  TripzyFrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref TripzyFrontendBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "arn:aws:s3:::${TripzyFrontendBucket}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${TripzyCloudFrontDistribution}"
+
+  TripzyCloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        HttpVersion: http2
+        DefaultRootObject: index.html
+        Aliases:
+          - !Ref DomainName
+          - !Sub "www.${DomainName}"
+        Origins:
+          - Id: S3FrontendOrigin
+            DomainName: !GetAtt TripzyFrontendBucket.RegionalDomainName
+            OriginAccessControlId: !Ref TripzyOriginAccessControl
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+          - Id: ApiGatewayOrigin
+            DomainName: !Sub "${TripzyHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+        
+        DefaultCacheBehavior:
+          TargetOriginId: S3FrontendOrigin
+          Compress: true
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        
+        CacheBehaviors:
+          - PathPattern: /api/*
+            TargetOriginId: ApiGatewayOrigin
+            ViewerProtocolPolicy: redirect-to-https
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            OriginRequestPolicyId: b050df10-d487-4c4e-a1f4-3c563da01344
+
+        ViewerCertificate:
+          AcmCertificateArn: !Ref AcmCertificateArn
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+
+  # =========================================================================
+  # ROUTE 53 AUTOMATED DNS MAPPINGS
+  # =========================================================================
+  TripzyApexDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt TripzyCloudFrontDistribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2
+
+  TripzyWwwDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub "www.${DomainName}"
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt TripzyCloudFrontDistribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2
+
+  # =========================================================================
+  # MUMBAI BACKEND INFRASTRUCTURE (VPC, Subnets, Lambdas, DynamoDB)
+  # =========================================================================
+  TripzyUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: prod-tripzyrate-user-pool
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+
+  TripzyUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: prod-tripzyrate-client
+      UserPoolId: !Ref TripzyUserPool
+      GenerateSecret: false
+
+  TripzyVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref TripzyVPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Sub ${AWS::Region}a
+
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Isolated security parameters for Lambda compute inside VPC
+      VpcId: !Ref TripzyVPC
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref TripzyVPC
+
+  PrivateRouteTableAssociationA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+
+  DynamoDBVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref TripzyVPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.dynamodb
+      VpcEndpointType: Gateway
+      RouteTableIds: [!Ref PrivateRouteTable]
+
+  TripzyHttpApi:
     Type: AWS::Serverless::HttpApi
     Properties:
       StageName: prod
-      CorsConfiguration:
-        AllowOrigins:
-          - "*"                 # tighten to your real domain before production
-        AllowMethods:
-          - POST
-          - OPTIONS
-        AllowHeaders:
-          - Content-Type
+      Auth:
+        DefaultAuthorizer: CognitoAuthorizer
+        Authorizers:
+          CognitoAuthorizer:
+            IdentitySource: "$request.header.Authorization"
+            JwtConfiguration:
+              Audience: [!Ref TripzyUserPoolClient]
+              Issuer: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${TripzyUserPool}
 
-  # ---------- DynamoDB table ----------
-  LeadsTable:
-    Type: AWS::DynamoDB::Table
-    Properties:
-      TableName: TripzyrateLeads
-      BillingMode: PAY_PER_REQUEST
-      AttributeDefinitions:
-        - AttributeName: id
-          AttributeType: S
-      KeySchema:
-        - AttributeName: id
-          KeyType: HASH
-
-  # ---------- Lambda function ----------
-  InquiryFunction:
+  TripzyProductsFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Handler: src/index.handler
-      CodeUri: ./
-      Environment:
-        Variables:
-          LEADS_TABLE: !Ref LeadsTable
+      Handler: src/handlers/products.handler
+      VpcConfig:
+        SecurityGroupIds: [!Ref LambdaSecurityGroup]
+        SubnetIds: [!Ref PrivateSubnetA]
       Policies:
         - DynamoDBCrudPolicy:
-            TableName: !Ref LeadsTable
+            TableName: !Ref TripzySingleTable
       Events:
-        SubmitInquiryApi:
+        GetProducts:
           Type: HttpApi
           Properties:
-            Path: /inquiry
-            Method: post
-            ApiId: !Ref TripzyrateApi
+            Path: /api/products
+            Method: get
+            ApiId: !Ref TripzyHttpApi
+
+  TripzySingleTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: prod-tripzyrate-single-table
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
 
 Outputs:
-  ApiUrl:
-    Description: "API Gateway endpoint URL to paste into your React frontend"
-    Value: !Sub "https://${TripzyrateApi}.execute-api.${AWS::Region}.amazonaws.com/prod/inquiry"
-
-  LeadsTableName:
-    Description: "DynamoDB table storing submitted leads"
-    Value: !Ref LeadsTable
+  WebsiteURL:
+    Description: Your production live web URL served via CloudFront CDN
+    Value: !Sub "https://${DomainName}/"
