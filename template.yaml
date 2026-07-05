@@ -197,7 +197,8 @@ Resources:
   TripzyHttpApi:
     Type: AWS::Serverless::HttpApi
     Properties:
-      StageName: prod
+      # FIX: Changing StageName to '$default' removes the '/prod' prefix completely!
+      StageName: "$default"
       Auth:
         DefaultAuthorizer: CognitoAuthorizer
         Authorizers:
