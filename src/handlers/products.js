@@ -1,43 +1,55 @@
 exports.handler = async (event) => {
-    console.log("Method Type:", event.requestContext.http.method);
-    
-    // --- 1. HANDLE BOOKING RESERVATIONS (POST /api/products) ---
-    if (event.requestContext.http.method === "POST") {
+    // Standardize incoming HTTP execution methods
+    const httpMethod = event.requestContext?.http?.method || event.httpMethod || "";
+    console.log(`Executing targeted method routine stream: ${httpMethod}`);
+
+    // --- 1. HANDLE POST DISPATCH (RESERVATIONS/BOOKINGS) ---
+    if (httpMethod.toUpperCase() === "POST") {
         try {
-            const body = JSON.parse(event.body || "{}");
+            // Robust parsing logic to capture incoming payload data securely
+            let body = {};
+            if (event.body) {
+                body = typeof event.body === "string" ? JSON.parse(event.body) : event.body;
+            }
+
             const { dealId, dealTitle, customerName, customerEmail } = body;
 
             if (!customerName || !customerEmail) {
                 return {
                     statusCode: 400,
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ error: "Name and Email are required to confirm booking." })
+                    headers: { 
+                        "Content-Type": "application/json",
+                        "Access-Control-Allow-Origin": "*" 
+                    },
+                    body: JSON.stringify({ error: "Missing parameters. Customer Name and Email are required." })
                 };
             }
 
-            console.log(`[BOOKING SUCCESS] Deal: ${dealTitle} (${dealId}) reserved for ${customerName} (${customerEmail})`);
-            
-            // In a full implementation, you would write an item to DynamoDB here.
-            
+            console.log(`[RESERVATION LOG SUCCESS] ${customerName} (${customerEmail}) provisionally locked deal: ${dealTitle}`);
+
             return {
                 statusCode: 201,
-                headers: { "Content-Type": "application/json" },
+                headers: { 
+                    "Content-Type": "application/json",
+                    "Access-Control-Allow-Origin": "*"
+                },
                 body: JSON.stringify({
                     success: true,
                     confirmationId: `TZ-${Math.floor(100000 + Math.random() * 900000)}`,
-                    message: `Pack your bags, ${customerName}! Your reservation for "${dealTitle}" has been provisionally locked in our Mumbai database.`
+                    message: `Pack your bags, ${customerName}! Your booking request for "${dealTitle}" has been securely processed and logged in Mumbai.`
                 })
             };
         } catch (err) {
+            console.error("Internal processing parsing exception error:", err);
             return {
                 statusCode: 500,
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ error: "Failed to process database booking payload." })
+                body: JSON.stringify({ error: "Malformed payload configuration. Check structural stream parameters." })
             };
         }
     }
 
-    // --- 2. DYNAMIC TRAVEL LISTINGS LOAD (GET /api/products) ---
+    // --- 2. HANDLE GET DISPATCH (TRAVEL LISTINGS LOAD) ---
     const backendTravelListings = [
         { 
             id: "api-v1-goa", 
@@ -61,7 +73,8 @@ exports.handler = async (event) => {
         statusCode: 200,
         headers: { 
             "Content-Type": "application/json",
-            "Cache-Control": "no-store, max-age=0"
+            "Cache-Control": "no-store, max-age=0",
+            "Access-Control-Allow-Origin": "*"
         },
         body: JSON.stringify({
             status: "Successfully pulled live data from AWS Lambda inside ap-south-1 (Mumbai)!",
