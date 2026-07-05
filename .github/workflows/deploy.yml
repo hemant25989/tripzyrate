@@ -35,14 +35,12 @@ jobs:
           audience: sts.amazonaws.com
 
       # -------------------------------------------------------------------------
-      # STEP 2: PROVISION / FETCH EDGE SSL CERTIFICATE VIA AWS CLI
+      # STEP 2: FETCH EDGE SSL CERTIFICATE VIA AWS CLI
       # -------------------------------------------------------------------------
       - name: Request and Validate SSL Certificate (N. Virginia Edge)
         id: get-cert
         run: |
           echo "Checking for an existing certificate for tripzyrate.in..."
-          
-          # Tries to find an existing certificate ARN for your domain in us-east-1
           EXISTING_ARN=$(aws acm list-certificates --region us-east-1 --query "CertificateSummaryList[?DomainName=='tripzyrate.in'].CertificateArn" --output text)
           
           if [ -z "$EXISTING_ARN" ] || [ "$EXISTING_ARN" == "None" ]; then
@@ -54,8 +52,6 @@ jobs:
               --idempotency-token tripzyratemaincert \
               --region us-east-1 \
               --query "CertificateArn" --output text)
-            
-            echo "New Certificate Requested. ARN: $NEW_ARN"
             echo "CERT_ARN=$NEW_ARN" >> $GITHUB_OUTPUT
           else
             echo "Found existing certificate. ARN: $EXISTING_ARN"
@@ -70,12 +66,13 @@ jobs:
 
       - name: SAM Deploy Core Application (Mumbai Backend)
         run: |
-          # Grabs the Certificate ARN set securely in Step 2
           CERT_ARN="${{ steps.get-cert.outputs.CERT_ARN }}"
           echo "Deploying production stack with Certificate ARN: $CERT_ARN"
           
+          # Added --resolve-s3 to auto-manage code deployment packaging storage
           sam deploy --no-confirm-changeset --no-fail-on-empty-changeset \
             --stack-name tripzyrate-production-stack \
             --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND \
             --region ap-south-1 \
+            --resolve-s3 \
             --parameter-overrides AcmCertificateArn=$CERT_ARN
