@@ -1,0 +1,20 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Automated Edge SSL Provisioning for CloudFront Delivery
+
+Resources:
+  TripzyGlobalCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: tripzyrate.in
+      ValidationMethod: DNS
+      SubjectAlternativeNames:
+        - "*.tripzyrate.in"
+      DomainValidationOptions:
+        - DomainName: tripzyrate.in
+          HostedZoneId: Z00944631CIAK88XCKPME
+        - DomainName: "*.tripzyrate.in"
+          HostedZoneId: Z00944631CIAK88XCKPME
+
+Outputs:
+  CertificateArn:
+    Value: !Ref TripzyGlobalCertificate
