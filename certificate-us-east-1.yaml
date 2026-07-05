@@ -10,6 +10,7 @@ Resources:
       SubjectAlternativeNames:
         - "*.tripzyrate.in"
       DomainValidationOptions:
+        # This tells AWS to look up your zone and insert the correct CNAME automatically
         - DomainName: tripzyrate.in
           HostedZoneId: Z00944631CIAK88XCKPME
         - DomainName: "*.tripzyrate.in"
