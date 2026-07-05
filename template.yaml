@@ -225,6 +225,9 @@ Resources:
             Path: /api/products
             Method: get
             ApiId: !Ref TripzyHttpApi
+            # FIX: Bypasses the default Cognito requirement just for this public viewing route!
+            Auth:
+              Authorizer: NONE
 
   TripzySingleTable:
     Type: AWS::DynamoDB::Table
