@@ -1,118 +1,62 @@
-name: Deploy Tripzyrate
+name: 100% Keyless Multi-Region Serverless Deployment
 
 on:
   push:
     branches:
       - main
-  workflow_dispatch: {}   # lets you trigger a deploy manually from the Actions tab
 
 permissions:
-  id-token: write   # required for OIDC auth to AWS
+  id-token: write
   contents: read
 
 jobs:
-  deploy-backend:
+  deploy-infrastructure:
     runs-on: ubuntu-latest
-    outputs:
-      api_url: ${{ steps.api_url.outputs.value }}
-
     steps:
-      - name: Checkout code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
+      - name: Setup Node.js Environment
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: 22
 
-      - name: Set up AWS SAM CLI
+      - name: Setup AWS SAM CLI
         uses: aws-actions/setup-sam@v2
 
-      - name: Configure AWS credentials (OIDC, no stored keys)
+      # -------------------------------------------------------------------------
+      # STEP 1: AUTHENTICATE SECURELY VIA OIDC
+      # -------------------------------------------------------------------------
+      - name: Authenticate via OIDC (Keyless)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          role-to-assume: arn:aws:iam::540633651375:role/tripzyrate-github-deploy-role
+          aws-region: us-east-1
+          audience: sts.amazonaws.com
 
-      - name: SAM build
-        run: sam build
-
-      - name: SAM deploy
-        run: |
-          sam deploy \
-            --stack-name tripzyrate-api \
-            --capabilities CAPABILITY_IAM \
-            --resolve-s3 \
-            --no-confirm-changeset \
-            --no-fail-on-empty-changeset \
-            --region ${{ secrets.AWS_REGION }}
-
-      - name: Get API URL
-        id: api_url
-        run: |
-          URL=$(aws cloudformation describe-stacks \
-            --stack-name tripzyrate-api \
-            --region ${{ secrets.AWS_REGION }} \
-            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
-            --output text)
-          echo "value=$URL" >> "$GITHUB_OUTPUT"
-          echo "API URL: $URL"
-
-  deploy-frontend:
-    runs-on: ubuntu-latest
-    needs: deploy-backend
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials (OIDC, no stored keys)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-      - name: Deploy hosting stack (S3 + CloudFront)
+      # -------------------------------------------------------------------------
+      # STEP 2: PROVISION EDGE SSL CERTIFICATE (us-east-1)
+      # -------------------------------------------------------------------------
+      - name: Provision Automated SSL Certificate (N. Virginia)
         run: |
           aws cloudformation deploy \
-            --template-file frontend/template.yaml \
-            --stack-name tripzyrate-frontend \
-            --region ${{ secrets.AWS_REGION }} \
-            --no-fail-on-empty-changeset
+            --template-file certificate-us-east-1.yaml \
+            --stack-name tripzyrate-global-certificate \
+            --region us-east-1
 
-      - name: Get bucket, distribution, and site URL
-        id: site
+      # -------------------------------------------------------------------------
+      # STEP 3: DEPLOY BACKEND MICROSERVICES STACK (ap-south-1)
+      # -------------------------------------------------------------------------
+      - name: SAM Build Production Application
+        run: sam build
+
+      - name: SAM Deploy Core Application (Mumbai Backend)
         run: |
-          BUCKET=$(aws cloudformation describe-stacks \
-            --stack-name tripzyrate-frontend --region ${{ secrets.AWS_REGION }} \
-            --query "Stacks[0].Outputs[?OutputKey=='BucketName'].OutputValue" --output text)
-          DIST_ID=$(aws cloudformation describe-stacks \
-            --stack-name tripzyrate-frontend --region ${{ secrets.AWS_REGION }} \
-            --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" --output text)
-          SITE_URL=$(aws cloudformation describe-stacks \
-            --stack-name tripzyrate-frontend --region ${{ secrets.AWS_REGION }} \
-            --query "Stacks[0].Outputs[?OutputKey=='SiteUrl'].OutputValue" --output text)
-          echo "bucket=$BUCKET" >> "$GITHUB_OUTPUT"
-          echo "dist_id=$DIST_ID" >> "$GITHUB_OUTPUT"
-          echo "site_url=$SITE_URL" >> "$GITHUB_OUTPUT"
-
-      - name: Inject live API URL into the page
-        run: |
-          mkdir -p dist
-          cp frontend/index.html dist/index.html
-          sed -i "s|__API_URL__|${{ needs.deploy-backend.outputs.api_url }}|g" dist/index.html
-
-      - name: Sync to S3
-        run: |
-          aws s3 sync dist/ s3://${{ steps.site.outputs.bucket }} \
-            --delete \
-            --region ${{ secrets.AWS_REGION }}
-
-      - name: Invalidate CloudFront cache
-        run: |
-          aws cloudfront create-invalidation \
-            --distribution-id ${{ steps.site.outputs.dist_id }} \
-            --paths "/*"
-
-      - name: Show live site URL
-        run: echo "Live at ${{ steps.site.outputs.site_url }}"
+          # Grabs the Certificate ARN generated completely on the fly in the previous step
+          CERT_ARN=$(aws cloudformation describe-stacks --stack-name tripzyrate-global-certificate --region us-east-1 --query "Stacks[0].Outputs[?OutputKey=='CertificateArn'].OutputValue" --output text)
+          
+          sam deploy --no-confirm-changeset --no-fail-on-empty-changeset \
+            --stack-name tripzyrate-production-stack \
+            --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND \
+            --region ap-south-1 \
+            --parameter-overrides AcmCertificateArn=$CERT_ARN
